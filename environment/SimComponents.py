@@ -73,104 +73,15 @@ class Source(object):
                 break
 
 
-class Process_without_subprocess(object):
-    def __init__(self, env, name, server_num, process_dict, monitor, qlimit=float('inf')):
-        self.env = env
-        self.name = name
-        self.server_num = server_num
-        self.process_dict = process_dict
-        self.Monitor = monitor
-        self.qlimit = qlimit
-
-        self.server = [None for _ in range(server_num)]
-        self.queue = deque([])
-        self.waiting = {}
-        self.delay_part_id = []
-        self.parts_rec = 0
-        self.parts_sent = 0
-        self.flag = False
-        self.len_of_server = []
-
-    def run(self, part, server_id):
-        # record: work_start
-        self.Monitor.record(self.env.now, self.name, '{0}_{1}'.format(self.name, server_id), part_id=part.id, event="work_start")
-        # work start
-        proc_time = part.data[(part.step, 'process_time')]
-        yield self.env.timeout(proc_time)
-
-        # record: work_finish
-        self.Monitor.record(self.env.now, self.name, '{0}_{1}'.format(self.name, server_id), part_id=part.id, event="work_finish")
-
-        # next process
-        next_process = part.data[(part.step + 1, 'process')]
-
-        if self.process_dict[next_process].__class__.__name__ == 'Process':
-            # lag: 후행공정 시작시간 - 선행공정 종료시간
-            lag = part.data[(part.step + 1, 'start_time')] - self.env.now
-            if lag > 0:
-                yield self.env.timeout(lag)
-
-            # 대기 event 발생
-            if len(self.process_dict[next_process].queue) + (self.process_dict[next_process].server_num - self.process_dict[next_process].server.count(None)) >= self.process_dict[next_process].qlimit:
-                self.process_dict[next_process].waiting[part.id] = self.env.event()
-                self.process_dict[next_process].delay_part_id.append(part.id)
-                # record: delay_start
-                self.Monitor.record(self.env.now, self.name, '{0}_{1}'.format(self.name, server_id), part_id=part.id, event="delay_start")
-
-                yield self.process_dict[next_process].waiting[part.id]
-                self.Monitor.record(self.env.now, self.name, '{0}_{1}'.format(self.name, server_id), part_id=part.id,
-                                    event="delay_finish")
-
-        # record: part_transferred
-        self.Monitor.record(self.env.now, self.name, '{0}_{1}'.format(self.name, server_id), part_id=part.id, event="part_transferred")
-        # part_transferred
-        self.process_dict[next_process].put(part)
-        part.step += 1
-        self.parts_sent += 1
-
-        if len(self.queue) > 0:
-            part = self.queue.popleft()
-            self.Monitor.record(self.env.now, self.name, None, part_id=part.id, event="routing_ended")
-            self.server[server_id] = self.env.process(self.run(part, server_id))
-            # record: queue_released
-            self.Monitor.record(self.env.now, self.name, None, part_id=part.id, event="queue_released")
-        else:
-            self.server[server_id] = None
-
-        # 대기 종료
-        server, queue = self.get_num_of_part()
-        if server + queue < self.qlimit and len(self.waiting) > 0:
-            delay_part = self.delay_part_id.pop(0)
-            self.waiting.pop(delay_part).succeed()
-
-    def put(self, part):
-        self.Monitor.record(self.env.now, self.name, None, part_id=part.id, event="Process_entered")
-        self.parts_rec += 1
-        if self.server.count(None) != 0:  # server에 자리가 있으면
-            self.server[self.server.index(None)] = self.env.process(self.run(part, self.server.index(None)))
-            self.Monitor.record(self.env.now, self.name, None, part_id=part.id, event="routing_ended")
-        else:  # server가 다 차 있으면
-            self.queue.append(part)
-            # record: queue_entered
-            self.Monitor.record(self.env.now, self.name, None, part_id=part.id, event="queue_entered")
-        self.len_of_server.append(self.server_num - self.server.count(None))
-
-    def get_num_of_part(self):
-        queue = len(self.queue)
-        server = self.server_num - self.server.count(None)
-
-        return server, queue
-
-
 class Process(object):
-    def __init__(self, env, name, server_num, process_dict, monitor, process_time=None, qlimit=float('inf'), routing_logic="cyclic"):
+    def __init__(self, env, name, server_num, process_dict, monitor, process_time=None, break_mean=None, repair_time=None, qlimit=float('inf'), routing_logic="cyclic"):
         self.env = env
         self.name = name
         self.server_process_time = process_time[self.name] if process_time is not None else [None for _ in range(server_num)]  ## [5, 10, 15]
         self.server_num = server_num
         self.Monitor = monitor
         self.process_dict = process_dict
-        self.server = [SubProcess(env, self.name, '{0}_{1}'.format(self.name, i), process_dict, self.server_process_time[i], self.Monitor) for i in range(server_num)]
+        self.server = [SubProcess(env, self.name, '{0}_{1}'.format(self.name, i), process_dict, self.server_process_time[i], break_mean, repair_time, self.Monitor) for i in range(server_num)]
         self.qlimit = qlimit
         self.routing_logic = routing_logic
 
@@ -228,7 +139,7 @@ class Process(object):
 
 
 class SubProcess(object):
-    def __init__(self, env, process_name, server_name, process_dict, process_time, monitor):
+    def __init__(self, env, process_name, server_name, process_dict, process_time, break_mean, repair_time, monitor):
         self.env = env
         self.process_name = process_name  # Process 이름
         self.name = server_name  # 해당 SubProcess의 id
@@ -238,9 +149,14 @@ class SubProcess(object):
 
         # SubProcess 실행
         self.action = env.process(self.run())
+        if break_mean:
+            env.process(self.break_machine())
         self.sub_queue = simpy.Store(env)
         self.flag = False  # SubProcess의 작업 여부
         self.part = None
+        self.break_mean = break_mean
+        self.repair_time = repair_time
+        self.broken = False
         self.working_start = 0.0
         self.total_time = 0.0
         self.working_time = 0.0
@@ -250,14 +166,9 @@ class SubProcess(object):
             # queue로부터 part 가져오기
             self.part = yield self.sub_queue.get()
             start_total_time = self.env.now
-            self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id, event="queue_released")
+            self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id,
+                                event="queue_released")
             self.flag = True
-
-            # record: work_start
-            self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id, event="work_start")
-
-            # work start
-            self.working_start = self.env.now
 
             # process_time
             if self.process_time == None:  # part에 process_time이 미리 주어지는 경우
@@ -265,61 +176,83 @@ class SubProcess(object):
             else:  # service time이 정해진 경우 --> 1) fixed time / 2) Stochastic-time
                 proc_time = self.process_time if type(self.process_time) == float else self.process_time()
 
-            yield self.env.timeout(proc_time)
+            while proc_time:
+                try:
+                    # record: work_start
+                    self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id, event="work_start")
 
-            # record: work_finish
-            self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id, event="work_finish")
-            self.working_time += self.env.now - self.working_start
+                    # work start
+                    self.working_start = self.env.now
 
-            step = 1
-            while not self.part.data[(self.part.step + step, 'process_time')]:
-                if self.part.data[(self.part.step + step, 'process')] != 'Sink':
-                    step += 1
-                else:
-                    break
+                    yield self.env.timeout(proc_time)
+                    proc_time = 0.0
 
-            # next process
-            next_process = self.part.data[(self.part.step + step, 'process')]
+                    # record: work_finish
+                    self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id, event="work_finish")
+                    self.working_time += self.env.now - self.working_start
 
-            if self.process_dict[next_process].__class__.__name__ == 'Process':
-                # lag: 후행공정 시작시간 - 선행공정 종료시간
-                lag = self.part.data[(self.part.step + step, 'start_time')] - self.env.now
-                if lag > 0:
-                    yield self.env.timeout(lag)
+                    step = 1
+                    while not self.part.data[(self.part.step + step, 'process_time')]:
+                        if self.part.data[(self.part.step + step, 'process')] != 'Sink':
+                            step += 1
+                        else:
+                            break
 
-                # delay start
-                next_server, next_queue = self.process_dict[next_process].get_num_of_part()
-                if next_server + next_queue >= self.process_dict[next_process].qlimit:
-                    self.process_dict[next_process].waiting[self.part.id] = self.env.event()
-                    self.process_dict[next_process].delay_part_id.append(self.part.id)
-                    self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id, event="delay_start")
+                    # next process
+                    next_process = self.part.data[(self.part.step + step, 'process')]
 
-                    yield self.process_dict[next_process].waiting[self.part.id]
-                    self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id, event="delay_finish")
+                    if self.process_dict[next_process].__class__.__name__ == 'Process':
+                        # lag: 후행공정 시작시간 - 선행공정 종료시간
+                        lag = self.part.data[(self.part.step + step, 'start_time')] - self.env.now
+                        if lag > 0:
+                            yield self.env.timeout(lag)
 
-                self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id, event="part_transferred")
-                self.process_dict[next_process].put(self.part)
+                        # delay start
+                        next_server, next_queue = self.process_dict[next_process].get_num_of_part()
+                        if next_server + next_queue >= self.process_dict[next_process].qlimit:
+                            self.process_dict[next_process].waiting[self.part.id] = self.env.event()
+                            self.process_dict[next_process].delay_part_id.append(self.part.id)
+                            self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id, event="delay_start")
 
-            else:
-                self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id,
-                                    event="part_transferred")
-                self.process_dict[next_process].put(self.part)
-            self.process_dict[self.process_name].parts_sent += 1
+                            yield self.process_dict[next_process].waiting[self.part.id]
+                            self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id, event="delay_finish")
 
-            self.flag = False
+                        self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id, event="part_transferred")
+                        self.process_dict[next_process].put(self.part)
 
-            self.part.step += step
+                    else:
+                        self.Monitor.record(self.env.now, self.process_name, self.name, part_id=self.part.id,
+                                            event="part_transferred")
+                        self.process_dict[next_process].put(self.part)
+                    self.process_dict[self.process_name].parts_sent += 1
+
+                    self.flag = False
+
+                    self.part.step += step
 
 
-            # delay finish
-            server, queue = self.process_dict[self.process_name].get_num_of_part()
-            if (server + queue < self.process_dict[self.process_name].qlimit) and (len(self.process_dict[self.process_name].waiting) > 0):
-                delay_part = self.process_dict[self.process_name].delay_part_id.pop(0)
-                self.process_dict[self.process_name].waiting.pop(delay_part).succeed()
+                    # delay finish
+                    server, queue = self.process_dict[self.process_name].get_num_of_part()
+                    if (server + queue < self.process_dict[self.process_name].qlimit) and (len(self.process_dict[self.process_name].waiting) > 0):
+                        delay_part = self.process_dict[self.process_name].delay_part_id.pop(0)
+                        self.process_dict[self.process_name].waiting.pop(delay_part).succeed()
 
-            self.part = None
+                    self.part = None
 
-            self.total_time += self.env.now - start_total_time
+                    self.total_time += self.env.now - start_total_time
+
+                except simpy.Interrupt:
+                    self.broken = True
+                    yield self.env.timeout(self.repair_time)
+                    self.broken = False
+
+    def break_machine(self):
+        """Break the machine every now and then."""
+        while True:
+            yield self.env.timeout(random.expovariate(self.break_mean))
+            if not self.broken:
+                # Only break the machine if it is currently working.
+                self.action.interrupt()
 
 
 class Sink(object):

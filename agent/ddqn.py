@@ -30,13 +30,13 @@ class DDQN():
         self.action_size = action_size
 
         self.discount_factor = 0.99
-        self.learning_rate = 0.001
+        self.learning_rate = 1e-6
         self.epsilon = 1.0
         self.epsilon_decay = 0.999
         self.epsilon_min = 0.01
-        self.batch_size = 64
-        self.train_start = 500
-        self.target_update_iter = 1000
+        self.batch_size = 128
+        self.train_start = 250
+        self.target_update_iter = 500
 
         self.memory = deque(maxlen=2000)
 
@@ -74,6 +74,7 @@ class DDQN():
         with tf.GradientTape() as tape:
             predicts = self.model(states)
             best_actions = np.argmin(predicts, axis=-1)
+            best_actions = tf.stop_gradient(best_actions)
             one_hot_action = tf.one_hot(actions, self.action_size)
             predicts = tf.reduce_sum(one_hot_action * predicts, axis=1)
 
@@ -145,9 +146,9 @@ if __name__ == "__main__":
 
                 with writer.as_default():
                     #tf.summary.scalar('Average Loss', self.avg_loss / float(step), step=e)
-                    #tf.summary.scalar('Average Max Q', self.avg_q_max / float(step), step=e)
-                    tf.summary.scalar('Reward', episode_reward, step=e)
-                    tf.summary.scalar('Lead time', lead_time, step=e)
+                    #tf.summary.scalar('Average Min Q', self.avg_q_min / float(step), step=e)
+                    tf.summary.scalar('Performance/Cost', episode_reward, step=e)
+                    tf.summary.scalar('Performance/Lead time', lead_time, step=e)
 
                 if e % 250 == 0:
                     agent.model.save_weights(model_path, save_format='tf')
