@@ -30,7 +30,7 @@ class DDQN():
         self.action_size = action_size
 
         self.discount_factor = 0.99
-        self.learning_rate = 1e-6
+        self.learning_rate = 1e-5
         self.epsilon = 1.0
         self.epsilon_decay = 0.999
         self.epsilon_min = 0.01
@@ -90,7 +90,7 @@ class DDQN():
 
 
 if __name__ == "__main__":
-    num_episode = 30000
+    num_episode = 3001
 
     num_of_processes = 7
     len_of_queue = 10

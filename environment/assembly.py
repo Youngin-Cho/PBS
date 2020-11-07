@@ -88,7 +88,17 @@ class Assembly(object):
         state = np.full(self.s_size, 0.0)
 
         server_feature = np.zeros(self.num_of_processes)
-        server_feature[:] = self.part_transfer - self.time
+        for i in range(self.num_of_processes):
+            process = self.model['Process{0}'.format(i)]  # modeling한 Process
+            for server in process.server:
+                if server.part:
+                    working_time_list = server.part.data.loc[slice(None), 'process_time']
+                    working_time = working_time_list[server.part.step]
+                    part_start_time = server.working_start
+                    if working_time >= (self.env.now - part_start_time):
+                        server_feature[i] = working_time - (self.env.now - part_start_time)
+                    server_feature[i + 1:] = server_feature[i + 1:] + working_time_list[i + 1:-1].to_numpy()
+        # server_feature[:] = self.part_transfer - self.time
         state[:self.num_of_processes] = server_feature
 
         job_feature = np.zeros(self.num_of_processes * self.len_of_queue)
@@ -115,8 +125,17 @@ class Assembly(object):
         return state
 
     def _calculate_reward(self):
-        reward = self.part_transfer[-1] - self.lead_time
-        return reward
+        # cost = self.part_transfer[-1] - self.lead_time
+        event_log = pd.read_csv(self.event_path)
+        idle_time_list = []
+        for name in self.model:
+            if name != "Sink":
+                process = self.model[name]
+                utilization, idle_time, working_time \
+                    = cal_utilization(event_log, name, "Process", start_time=self.time, finish_time=self.env.now)
+                idle_time_list.append(idle_time/(self.env.now - self.time))
+        cost = np.sum(idle_time_list)
+        return cost
 
     def _modeling(self, num_of_processes, event_path):
         env = simpy.Environment()
