@@ -125,17 +125,19 @@ class Assembly(object):
         return state
 
     def _calculate_reward(self):
-        # cost = self.part_transfer[-1] - self.lead_time
-        event_log = pd.read_csv(self.event_path)
-        idle_time_list = []
-        for name in self.model:
-            if name != "Sink":
-                process = self.model[name]
-                utilization, idle_time, working_time \
-                    = cal_utilization(event_log, name, "Process", start_time=self.time, finish_time=self.env.now)
-                idle_time_list.append(idle_time/(self.env.now - self.time))
-        cost = np.sum(idle_time_list)
-        return cost
+        increase = self.part_transfer[-1] - self.lead_time
+        reward = (20 - increase) #/ 10
+        #reward = 10 / increase if increase != 0 else 10
+        # event_log = pd.read_csv(self.event_path)
+        # idle_time_list = []
+        # for name in self.model:
+        #     if name != "Sink":
+        #         process = self.model[name]
+        #         utilization, idle_time, working_time \
+        #             = cal_utilization(event_log, name, "Process", start_time=self.time, finish_time=self.env.now)
+        #         idle_time_list.append(idle_time/(self.env.now - self.time))
+        # cost = np.sum(idle_time_list)
+        return reward
 
     def _modeling(self, num_of_processes, event_path):
         env = simpy.Environment()

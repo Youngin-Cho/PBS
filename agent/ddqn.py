@@ -30,7 +30,7 @@ class DDQN():
         self.action_size = action_size
 
         self.discount_factor = 0.99
-        self.learning_rate = 1e-5
+        self.learning_rate = 1e-4
         self.epsilon = 1.0
         self.epsilon_decay = 0.999
         self.epsilon_min = 0.01
@@ -45,6 +45,8 @@ class DDQN():
         self.update_target_model()
         self.optimizer = tf.keras.optimizers.Adam(lr=self.learning_rate)
 
+        self.avg_q_max, self.avg_loss = 0, 0
+
     def update_target_model(self):
         self.target_model.set_weights(self.model.get_weights())
 
@@ -56,7 +58,7 @@ class DDQN():
             return random.randrange(scope)
         else:
             q_value = self.model(state)
-            return np.argmin(q_value[0, :scope])
+            return np.argmax(q_value[0, :scope])
 
     def train(self):
         if self.epsilon > self.epsilon_min:
@@ -73,7 +75,7 @@ class DDQN():
         model_params = self.model.trainable_variables
         with tf.GradientTape() as tape:
             predicts = self.model(states)
-            best_actions = np.argmin(predicts, axis=-1)
+            best_actions = np.argmax(predicts, axis=-1)
             best_actions = tf.stop_gradient(best_actions)
             one_hot_action = tf.one_hot(actions, self.action_size)
             predicts = tf.reduce_sum(one_hot_action * predicts, axis=1)
@@ -84,6 +86,8 @@ class DDQN():
             targets = rewards + (1 - dones) * self.discount_factor \
                       * np.array([target_predicts[i, best_actions[i]] for i in range(target_predicts.shape[0])])
             loss = tf.reduce_mean(tf.square(targets - predicts))
+
+            self.avg_loss += loss.numpy()
 
         grads = tape.gradient(loss, model_params)
         self.optimizer.apply_gradients(zip(grads, model_params))
@@ -118,16 +122,21 @@ if __name__ == "__main__":
     agent = DDQN(state_size, action_size)
     writer = tf.summary.create_file_writer(summary_path)
 
-    for e in range(num_episode):
+    for e in range(1, num_episode):
         done = False
+        step = 0
         episode_reward = 0
         state = assembly.reset()
         state = np.reshape(state, [1, state_size])
 
         while not done:
+            step += 1
+
             action = agent.get_action(state, len(assembly.queue))
             next_state, reward, done = assembly.step(action)
             next_state = np.reshape(next_state, [1, state_size])
+
+            agent.avg_q_max += np.amax(agent.model(state)[0])
 
             episode_reward += reward
 
@@ -145,11 +154,13 @@ if __name__ == "__main__":
                 lead_time = assembly.model['Sink'].last_arrival
 
                 with writer.as_default():
-                    #tf.summary.scalar('Average Loss', self.avg_loss / float(step), step=e)
-                    #tf.summary.scalar('Average Min Q', self.avg_q_min / float(step), step=e)
-                    tf.summary.scalar('Performance/Cost', episode_reward, step=e)
+                    tf.summary.scalar('Loss/Average Loss', agent.avg_loss / float(step), step=e)
+                    tf.summary.scalar('Performance/Average Max Q', agent.avg_q_max / float(step), step=e)
+                    tf.summary.scalar('Performance/Reward', episode_reward, step=e)
                     tf.summary.scalar('Performance/Lead time', lead_time, step=e)
 
                 if e % 250 == 0:
                     agent.model.save_weights(model_path, save_format='tf')
                     print("Saved Model at episode %d" % e)
+
+                agent.avg_q_max, agent.avg_loss = 0, 0
