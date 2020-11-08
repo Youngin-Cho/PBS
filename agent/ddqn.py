@@ -30,13 +30,13 @@ class DDQN():
         self.action_size = action_size
 
         self.discount_factor = 0.99
-        self.learning_rate = 1e-4
+        self.learning_rate = 1e-6
         self.epsilon = 1.0
         self.epsilon_decay = 0.999
         self.epsilon_min = 0.01
-        self.batch_size = 128
-        self.train_start = 250
-        self.target_update_iter = 500
+        self.batch_size = 32
+        self.train_start = 50
+        self.target_update_iter = 100
 
         self.memory = deque(maxlen=2000)
 

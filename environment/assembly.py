@@ -55,7 +55,7 @@ class Assembly(object):
         if len(self.inbound_panel_blocks) > 0 and len(self.queue) < self.len_of_queue:
             self.queue.append(self.inbound_panel_blocks.pop(0))
 
-        reward = self._calculate_reward_by_first_process_idle_time()
+        reward = self._calculate_reward()
         next_state = self._get_state()
 
         self.lead_time = self.part_transfer[-1]
