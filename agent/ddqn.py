@@ -94,7 +94,7 @@ class DDQN():
 
 
 if __name__ == "__main__":
-    num_episode = 3001
+    num_episode = 1001
 
     num_of_processes = 7
     len_of_queue = 10

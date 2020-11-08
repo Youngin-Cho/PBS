@@ -55,7 +55,7 @@ class Assembly(object):
         if len(self.inbound_panel_blocks) > 0 and len(self.queue) < self.len_of_queue:
             self.queue.append(self.inbound_panel_blocks.pop(0))
 
-        reward = self._calculate_reward()
+        reward = self._calculate_reward_by_first_process_idle_time()
         next_state = self._get_state()
 
         self.lead_time = self.part_transfer[-1]
@@ -126,18 +126,27 @@ class Assembly(object):
 
     def _calculate_reward(self):
         increase = self.part_transfer[-1] - self.lead_time
-        reward = (20 - increase) #/ 10
-        #reward = 10 / increase if increase != 0 else 10
-        # event_log = pd.read_csv(self.event_path)
-        # idle_time_list = []
-        # for name in self.model:
-        #     if name != "Sink":
-        #         process = self.model[name]
-        #         utilization, idle_time, working_time \
-        #             = cal_utilization(event_log, name, "Process", start_time=self.time, finish_time=self.env.now)
-        #         idle_time_list.append(idle_time/(self.env.now - self.time))
-        # cost = np.sum(idle_time_list)
+        reward = 25 - increase
         return reward
+
+    def _calculate_reward_by_first_process_idle_time(self):
+        event_log = pd.read_csv(self.event_path)
+        utilization, idle_time, working_time \
+            = cal_utilization(event_log, "Process0", "Process", start_time=self.time, finish_time=self.env.now)
+        reward = utilization
+        return reward
+
+    def _calculate_reward_by_entire_idle_time(self):
+        event_log = pd.read_csv(self.event_path)
+        idle_time_list = []
+        for name in self.model:
+            if name != "Sink":
+                process = self.model[name]
+                utilization, idle_time, working_time \
+                    = cal_utilization(event_log, name, "Process", start_time=self.time, finish_time=self.env.now)
+                idle_time_list.append(idle_time / (self.env.now - self.time))
+        cost = np.sum(idle_time_list)
+        return cost
 
     def _modeling(self, num_of_processes, event_path):
         env = simpy.Environment()
