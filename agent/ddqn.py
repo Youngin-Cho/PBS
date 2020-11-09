@@ -14,7 +14,7 @@ class Network(tf.keras.Model):
         self.hidden1 = tf.keras.layers.Dense(512, activation="relu", kernel_initializer="he_normal")
         self.hidden2 = tf.keras.layers.Dense(256, activation="relu", kernel_initializer="he_normal")
         self.hidden3 = tf.keras.layers.Dense(256, activation="relu", kernel_initializer="he_normal")
-        self.out = tf.keras.layers.Dense(a_size, activation="relu", kernel_initializer="he_normal")
+        self.out = tf.keras.layers.Dense(a_size)
 
     def call(self, inputs):
         hidden1 = self.hidden1(inputs)
@@ -25,23 +25,25 @@ class Network(tf.keras.Model):
 
 
 class DDQN():
-    def __init__(self, state_size, action_size):
+    def __init__(self, state_size, action_size, model_path=None, load_model=False):
         self.state_size = state_size
         self.action_size = action_size
 
         self.discount_factor = 0.99
-        self.learning_rate = 1e-6
+        self.learning_rate = 1e-5
         self.epsilon = 1.0
         self.epsilon_decay = 0.999
         self.epsilon_min = 0.01
-        self.batch_size = 32
-        self.train_start = 50
-        self.target_update_iter = 100
+        self.batch_size = 64
+        self.train_start = 200
+        self.target_update_iter = 500
 
         self.memory = deque(maxlen=2000)
 
         self.model = Network(action_size)
         self.target_model = Network(action_size)
+        #if load_model:
+            #self.model = keras.models.load_model("my_model")
         self.update_target_model()
         self.optimizer = tf.keras.optimizers.Adam(lr=self.learning_rate)
 
@@ -94,7 +96,7 @@ class DDQN():
 
 
 if __name__ == "__main__":
-    num_episode = 1001
+    num_episode = 10001
 
     num_of_processes = 7
     len_of_queue = 10
@@ -104,7 +106,7 @@ if __name__ == "__main__":
 
     model_path = '../model/ddqn/queue-%d' % action_size
     summary_path = '../summary/ddqn/queue-%d' % action_size
-    event_path = '../simulation/ddqn/queue-%d'
+    event_path = '../simulation/ddqn/queue-%d' % action_size
 
     if not os.path.exists(model_path):
         os.makedirs(model_path)
@@ -160,7 +162,7 @@ if __name__ == "__main__":
                     tf.summary.scalar('Performance/Lead time', lead_time, step=e)
 
                 if e % 250 == 0:
-                    agent.model.save_weights(model_path, save_format='tf')
+                    agent.model.save(model_path)
                     print("Saved Model at episode %d" % e)
 
                 agent.avg_q_max, agent.avg_loss = 0, 0
