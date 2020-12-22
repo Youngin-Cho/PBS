@@ -29,22 +29,24 @@ class DDQN():
         self.state_size = state_size
         self.action_size = action_size
 
-        self.discount_factor = 0.99
+        self.discount_factor = 0.9
         self.learning_rate = 1e-5
         self.epsilon = 1.0
         self.epsilon_decay = 0.999
         self.epsilon_min = 0.01
-        self.batch_size = 64
-        self.train_start = 200
-        self.target_update_iter = 500
+        self.batch_size = 32
+        self.train_start = 100
+        self.target_update_iter = 200
 
         self.memory = deque(maxlen=2000)
 
-        self.model = Network(action_size)
-        self.target_model = Network(action_size)
-        #if load_model:
-            #self.model = keras.models.load_model("my_model")
-        self.update_target_model()
+        if load_model:
+            self.model = tf.keras.models.load_model(model_path)
+            self.target_model = tf.keras.models.load_model(model_path)
+        else:
+            self.model = Network(action_size)
+            self.target_model = Network(action_size)
+            self.update_target_model()
         self.optimizer = tf.keras.optimizers.Adam(lr=self.learning_rate)
 
         self.avg_q_max, self.avg_loss = 0, 0
@@ -106,6 +108,7 @@ if __name__ == "__main__":
 
     model_path = '../model/ddqn/queue-%d' % action_size
     summary_path = '../summary/ddqn/queue-%d' % action_size
+    result_path = '../result/ddqn/queue-%d' % action_size
     event_path = '../simulation/ddqn/queue-%d' % action_size
 
     if not os.path.exists(model_path):
@@ -113,6 +116,9 @@ if __name__ == "__main__":
 
     if not os.path.exists(summary_path):
         os.makedirs(summary_path)
+
+    if not os.path.exists(result_path):
+        os.makedirs(result_path)
 
     if not os.path.exists(event_path):
         os.makedirs(event_path)
@@ -124,6 +130,10 @@ if __name__ == "__main__":
     agent = DDQN(state_size, action_size)
     writer = tf.summary.create_file_writer(summary_path)
 
+    avg_max_q_list = []
+    reward_list = []
+    lead_time_list = []
+    loss_list = []
     for e in range(1, num_episode):
         done = False
         step = 0
@@ -160,9 +170,16 @@ if __name__ == "__main__":
                     tf.summary.scalar('Performance/Average Max Q', agent.avg_q_max / float(step), step=e)
                     tf.summary.scalar('Performance/Reward', episode_reward, step=e)
                     tf.summary.scalar('Performance/Lead time', lead_time, step=e)
+                    avg_max_q_list.append(agent.avg_loss / float(step))
+                    reward_list.append(episode_reward)
+                    lead_time_list.append(lead_time)
+                    loss_list.append(agent.avg_loss / float(step))
 
                 if e % 250 == 0:
                     agent.model.save(model_path)
                     print("Saved Model at episode %d" % e)
 
                 agent.avg_q_max, agent.avg_loss = 0, 0
+
+    log_data = pd.DataFrame({"avg_max_q_": avg_max_q_list, "reward": reward_list, "lead_time": lead_time_list, "loss": loss_list})
+    log_data.to_csv(summary_path + "/data.csv")
