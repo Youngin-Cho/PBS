@@ -106,6 +106,8 @@ if __name__ == "__main__":
     state_size = num_of_processes + num_of_processes * len_of_queue
     action_size = len_of_queue
 
+    random_blocks = True
+
     model_path = '../model/ddqn/queue-%d' % action_size
     summary_path = '../summary/ddqn/queue-%d' % action_size
     result_path = '../result/ddqn/queue-%d' % action_size
@@ -123,9 +125,14 @@ if __name__ == "__main__":
     if not os.path.exists(event_path):
         os.makedirs(event_path)
 
-    panel_blocks = import_panel_block_schedule('../environment/data/PBS_assy_sequence_gen_000.csv')
-    assembly = Assembly(num_of_processes, len_of_queue, event_path + '/log_train.csv',
-                        inbound_panel_blocks=panel_blocks)
+    if random_blocks:
+        num_of_parts = 100
+        assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_train.csv')
+    else:
+        panel_blocks = import_panel_block_schedule('../environment/data/PBS_assy_sequence_gen_000.csv')
+        num_of_parts = len(panel_blocks)
+        assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_train.csv',
+                            inbound_panel_blocks=panel_blocks)
 
     agent = DDQN(state_size, action_size)
     writer = tf.summary.create_file_writer(summary_path)

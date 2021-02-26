@@ -5,16 +5,23 @@ import pandas as pd
 
 from environment.SimComponents import Process, Sink, Monitor
 from environment.PostProcessing import *
+from environment.panelblock import *
 
 
 class Assembly(object):
-    def __init__(self, num_of_processes, len_of_queue, event_path, inbound_panel_blocks=None):
+    def __init__(self, num_of_processes, len_of_queue, num_of_parts, event_path, inbound_panel_blocks=None):
         self.num_of_processes = num_of_processes
         self.len_of_queue = len_of_queue
         self.event_path = event_path
-        self.inbound_panel_blocks = inbound_panel_blocks
-        self.inbound_panel_blocks_clone = self.inbound_panel_blocks[:]
-        self.num_of_parts = len(inbound_panel_blocks)
+        if inbound_panel_blocks:
+            self.random = False
+            self.inbound_panel_blocks = inbound_panel_blocks
+            self.inbound_panel_blocks_clone = self.inbound_panel_blocks[:]
+        else:
+            self.random = True
+            self.inbound_panel_blocks = generate_block_schedule(num_of_parts)
+            self.inbound_panel_blocks_clone = self.inbound_panel_blocks[:]
+        self.num_of_parts = num_of_parts
 
         self.a_size = len_of_queue
         self.s_size = num_of_processes + num_of_processes * len_of_queue
@@ -68,10 +75,13 @@ class Assembly(object):
 
     def reset(self):
         self.env, self.model, self.monitor = self._modeling(self.num_of_processes, self.event_path)
-        self.inbound_panel_blocks = self.inbound_panel_blocks_clone[:]
-        for panel_block in self.inbound_panel_blocks:
-            panel_block.step = 0
-        random.shuffle(self.inbound_panel_blocks)
+        if self.random:
+            self.inbound_panel_blocks = generate_block_schedule()
+        else:
+            self.inbound_panel_blocks = self.inbound_panel_blocks_clone[:]
+            for panel_block in self.inbound_panel_blocks:
+                panel_block.step = 0
+            random.shuffle(self.inbound_panel_blocks)
         for i in range(self.len_of_queue):
             self.queue.append(self.inbound_panel_blocks.pop(0))
         self.lead_time = 0.0
@@ -97,7 +107,7 @@ class Assembly(object):
                     part_start_time = server.working_start
                     if working_time >= (self.env.now - part_start_time):
                         server_feature[i] = working_time - (self.env.now - part_start_time)
-                    #server_feature[i + 1:] = server_feature[i + 1:] + working_time_list[i + 1:-1].to_numpy()
+                    # server_feature[i + 1:] = server_feature[i + 1:] + working_time_list[i + 1:-1].to_numpy()
         # server_feature[:] = self.part_transfer - self.time
         state[:self.num_of_processes] = server_feature
 
@@ -141,7 +151,6 @@ class Assembly(object):
         utilization_list = []
         for name in self.model:
             if name != "Sink":
-                process = self.model[name]
                 utilization, idle_time, working_time \
                     = cal_utilization(event_log, name, "Process", start_time=self.time, finish_time=self.env.now)
                 utilization_list.append(utilization)
@@ -193,12 +202,20 @@ if __name__ == '__main__':
     num_of_processes = 7
     len_of_queue = 10
 
+    random_blocks = True
+
     event_path = './test_env'
     if not os.path.exists(event_path):
         os.makedirs(event_path)
 
-    panel_blocks = import_panel_block_schedule('./data/PBS_assy_sequence_gen_000.csv')
-    assembly = Assembly(num_of_processes, len_of_queue, event_path + '/event_PBS.csv', inbound_panel_blocks=panel_blocks)
+    if random_blocks:
+        num_of_parts = 100
+        assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_train.csv')
+    else:
+        panel_blocks = import_panel_block_schedule('./data/PBS_assy_sequence_gen_000.csv')
+        num_of_parts = len(panel_blocks)
+        assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/event_PBS.csv',
+                            inbound_panel_blocks=panel_blocks)
 
     s = assembly.reset()
     r_cum = 0.0
