@@ -101,12 +101,13 @@ if __name__ == "__main__":
     num_episode = 10001
 
     num_of_processes = 7
-    len_of_queue = 10
+    len_of_queue = 20
+    num_of_parts = 100
 
     state_size = num_of_processes + num_of_processes * len_of_queue
     action_size = len_of_queue
 
-    random_blocks = True
+    load_model = False
 
     model_path = '../model/ddqn/queue-%d' % action_size
     summary_path = '../summary/ddqn/queue-%d' % action_size
@@ -125,16 +126,20 @@ if __name__ == "__main__":
     if not os.path.exists(event_path):
         os.makedirs(event_path)
 
-    if random_blocks:
-        num_of_parts = 100
-        assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_train.csv')
-    else:
-        panel_blocks = import_panel_block_schedule('../environment/data/PBS_assy_sequence_gen_000.csv')
-        num_of_parts = len(panel_blocks)
-        assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_train.csv',
-                            inbound_panel_blocks=panel_blocks)
+    # if random_blocks:
+    #     num_of_parts = 100
+    #     assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_train.csv')
+    # else:
+    #     panel_blocks = import_panel_block_schedule('../environment/data/PBS_assy_sequence_gen_000.csv')
+    #     num_of_parts = len(panel_blocks)
+    #     assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_train.csv',
+    #                         inbound_panel_blocks=panel_blocks)
 
-    agent = DDQN(state_size, action_size)
+    panel_blocks = generate_block_schedule(num_of_parts)
+    assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_train.csv',
+                        inbound_panel_blocks=panel_blocks)
+
+    agent = DDQN(state_size, action_size, load_model=load_model)
     writer = tf.summary.create_file_writer(summary_path)
 
     avg_max_q_list = []
