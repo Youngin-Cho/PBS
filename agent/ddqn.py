@@ -25,9 +25,13 @@ class Network(tf.keras.Model):
 
 
 class DDQN():
-    def __init__(self, state_size, action_size, model_path=None, load_model=False):
+    def __init__(self, env, state_size, action_size, model_path=None, summary_path=None, event_path=None, load_model=False):
+        self.env = env
         self.state_size = state_size
         self.action_size = action_size
+        self.model_path = model_path
+        self.summary_path = summary_path
+        self.event_path = event_path
 
         self.discount_factor = 0.99
         self.learning_rate = 1e-5
@@ -40,16 +44,38 @@ class DDQN():
 
         self.memory = deque(maxlen=2000)
 
-        if load_model:
-            self.model = tf.keras.models.load_model(model_path)
-            self.target_model = tf.keras.models.load_model(model_path)
-        else:
-            self.model = Network(action_size)
-            self.target_model = Network(action_size)
-            self.update_target_model()
+        # if load_model:
+        #     self.model = tf.keras.models.load_model(model_path)
+        #     self.target_model = tf.keras.models.load_model(model_path)
+        # else:
+        #     self.model = Network(action_size)
+        #     self.target_model = Network(action_size)
+        #     self.update_target_model()
+
+        self.model = self.build_network(self.state_size, self.action_size, 512, 256, 256)
+        self.target_model = self.build_network(self.state_size, self.action_size, 512, 256, 256)
+
         self.optimizer = tf.keras.optimizers.Adam(lr=self.learning_rate)
+        self.ckpt = tf.train.Checkpoint(step=tf.Variable(1), optimizer=self.optimizer, net=self.model)
+        self.manager = tf.train.CheckpointManager(self.ckpt, model_path, max_to_keep=3)
+        self.writer = tf.summary.create_file_writer(summary_path)
+
+        if load_model:
+            self.ckpt.restore(self.manager.latest_checkpoint)
+            print()
+
+        self.update_target_model()
 
         self.avg_q_max, self.avg_loss = 0, 0
+
+    def build_network(self, in_dim, out_dim, n_units1, n_units2, n_units3):
+        inputs = tf.keras.layers.Input(shape=(in_dim,))
+        hidden1 = tf.keras.layers.Dense(n_units1, activation="elu", kernel_initializer="he_normal")(inputs)
+        hidden2 = tf.keras.layers.Dense(n_units2, activation="elu", kernel_initializer="he_normal")(hidden1)
+        hidden3 = tf.keras.layers.Dense(n_units3, activation="elu", kernel_initializer="he_normal")(hidden2)
+        outputs = tf.keras.layers.Dense(out_dim)(hidden3)
+        model = tf.keras.models.Model(inputs=inputs, outputs=outputs)
+        return model
 
     def update_target_model(self):
         self.target_model.set_weights(self.model.get_weights())
@@ -96,9 +122,67 @@ class DDQN():
         grads = tape.gradient(loss, model_params)
         self.optimizer.apply_gradients(zip(grads, model_params))
 
+    def run(self, num_episode):
+        avg_max_q_list = []
+        reward_list = []
+        lead_time_list = []
+        loss_list = []
+        for e in range(num_episode):
+            self.ckpt.step.assign_add(1)
+
+            done = False
+            step = 0
+            episode_reward = 0
+            state = self.env.reset()
+            state = np.reshape(state, [1, state_size])
+
+            while not done:
+                step += 1
+
+                action = self.get_action(state, len(assembly.queue))
+                next_state, reward, done = self.env.step(action)
+                next_state = np.reshape(next_state, [1, state_size])
+
+                self.avg_q_max += np.amax(self.model(state)[0])
+
+                episode_reward += reward
+
+                self.append_sample(state, action, reward, next_state, done)
+
+                if len(self.memory) >= self.train_start:
+                    self.train()
+
+                if e % self.target_update_iter == 0:
+                    self.update_target_model()
+
+                state = next_state
+
+                if done:
+                    lead_time = self.env.model['Sink'].last_arrival
+
+                    with self.writer.as_default():
+                        tf.summary.scalar('Loss/Average Loss', self.avg_loss / float(step), step=e)
+                        tf.summary.scalar('Performance/Average Max Q', self.avg_q_max / float(step), step=e)
+                        tf.summary.scalar('Performance/Reward', episode_reward, step=e)
+                        tf.summary.scalar('Performance/Lead time', lead_time, step=e)
+                        avg_max_q_list.append(self.avg_q_max / float(step))
+                        reward_list.append(episode_reward)
+                        lead_time_list.append(lead_time)
+                        loss_list.append(self.avg_loss / float(step))
+
+                    if e % 250 == 0:
+                        self.manager.save(e)
+                        print("Saved Model at episode %d" % e)
+
+                    self.avg_q_max, self.avg_loss = 0, 0
+
+        log_data = pd.DataFrame(
+            {"avg_max_q_": avg_max_q_list, "reward": reward_list, "lead_time": lead_time_list, "loss": loss_list})
+        log_data.to_csv(summary_path + "/data.csv")
+
 
 if __name__ == "__main__":
-    num_episode = 10001
+    num_episode = 20001
 
     num_of_processes = 7
     len_of_queue = 10
@@ -108,10 +192,10 @@ if __name__ == "__main__":
     action_size = len_of_queue
 
     load_model = False
+    random_block = True
 
     model_path = '../model/ddqn/queue-%d' % action_size
     summary_path = '../summary/ddqn/queue-%d' % action_size
-    result_path = '../result/ddqn/queue-%d' % action_size
     event_path = '../simulation/ddqn/queue-%d' % action_size
 
     if not os.path.exists(model_path):
@@ -120,78 +204,19 @@ if __name__ == "__main__":
     if not os.path.exists(summary_path):
         os.makedirs(summary_path)
 
-    if not os.path.exists(result_path):
-        os.makedirs(result_path)
-
     if not os.path.exists(event_path):
         os.makedirs(event_path)
 
-    # if random_blocks:
-    #     num_of_parts = 100
-    #     assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_train.csv')
-    # else:
-    #     panel_blocks = import_panel_block_schedule('../environment/data/PBS_assy_sequence_gen_000.csv')
-    #     num_of_parts = len(panel_blocks)
-    #     assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_train.csv',
-    #                         inbound_panel_blocks=panel_blocks)
-
     panel_blocks = generate_block_schedule(num_of_parts)
     assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_train.csv',
-                        inbound_panel_blocks=panel_blocks)
+                        inbound_panel_blocks=panel_blocks, random_block=random_block)
 
-    agent = DDQN(state_size, action_size, model_path=model_path, load_model=load_model)
-    writer = tf.summary.create_file_writer(summary_path)
+    agent = DDQN(assembly,
+                 state_size,
+                 action_size,
+                 model_path=model_path,
+                 summary_path=summary_path,
+                 event_path=event_path,
+                 load_model=load_model)
 
-    avg_max_q_list = []
-    reward_list = []
-    lead_time_list = []
-    loss_list = []
-    for e in range(1, num_episode):
-        done = False
-        step = 0
-        episode_reward = 0
-        state = assembly.reset()
-        state = np.reshape(state, [1, state_size])
-
-        while not done:
-            step += 1
-
-            action = agent.get_action(state, len(assembly.queue))
-            next_state, reward, done = assembly.step(action)
-            next_state = np.reshape(next_state, [1, state_size])
-
-            agent.avg_q_max += np.amax(agent.model(state)[0])
-
-            episode_reward += reward
-
-            agent.append_sample(state, action, reward, next_state, done)
-
-            if len(agent.memory) >= agent.train_start:
-                agent.train()
-
-            if e % agent.target_update_iter == 0:
-                agent.update_target_model()
-
-            state = next_state
-
-            if done:
-                lead_time = assembly.model['Sink'].last_arrival
-
-                with writer.as_default():
-                    tf.summary.scalar('Loss/Average Loss', agent.avg_loss / float(step), step=e)
-                    tf.summary.scalar('Performance/Average Max Q', agent.avg_q_max / float(step), step=e)
-                    tf.summary.scalar('Performance/Reward', episode_reward, step=e)
-                    tf.summary.scalar('Performance/Lead time', lead_time, step=e)
-                    avg_max_q_list.append(agent.avg_q_max / float(step))
-                    reward_list.append(episode_reward)
-                    lead_time_list.append(lead_time)
-                    loss_list.append(agent.avg_loss / float(step))
-
-                if e % 250 == 0:
-                    agent.model.save(model_path)
-                    print("Saved Model at episode %d" % e)
-
-                agent.avg_q_max, agent.avg_loss = 0, 0
-
-    log_data = pd.DataFrame({"avg_max_q_": avg_max_q_list, "reward": reward_list, "lead_time": lead_time_list, "loss": loss_list})
-    log_data.to_csv(summary_path + "/data.csv")
+    agent.run(num_episode)

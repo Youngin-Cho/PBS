@@ -9,35 +9,34 @@ from environment.panelblock import *
 
 
 class Assembly(object):
-    def __init__(self, num_of_processes, len_of_queue, num_of_parts, event_path, inbound_panel_blocks=None):
+    def __init__(self, num_of_processes, len_of_queue, num_of_parts, event_path, inbound_panel_blocks=None, random_block=False):
         self.num_of_processes = num_of_processes
         self.len_of_queue = len_of_queue
-        self.event_path = event_path
-        self.inbound_panel_blocks = inbound_panel_blocks
-        self.inbound_panel_blocks_clone = self.inbound_panel_blocks[:]
         self.num_of_parts = num_of_parts
+        self.event_path = event_path
+        if random_block:
+            self.inbound_panel_blocks = generate_block_schedule(num_of_parts)
+        else:
+            self.inbound_panel_blocks = inbound_panel_blocks
+            self.inbound_panel_blocks_clone = self.inbound_panel_blocks[:]
+        self.random_block = random_block
 
         self.a_size = len_of_queue
         self.s_size = num_of_processes + num_of_processes * len_of_queue
         self.env, self.model, self.monitor = self._modeling(self.num_of_processes, self.event_path)
         self.queue = []
+        self.block = None
         self.lead_time = 0.0
         self.part_transfer = np.full(num_of_processes, 0.0)
-        self.work_finish = np.full(num_of_processes, 0.0)
-        self.block_working_time_pre = np.full(num_of_processes, 0.0)
-        self.block_working_time_cur = np.full(num_of_processes, 0.0)
-        self.time = 0.0
-        self.tau = 0.0
         self.num_of_blocks_put = 0
 
     def step(self, action):
         done = False
-        block = self.queue.pop(action)
-        self.block_working_time_pre = self.block_working_time_cur[:]
-        self.block_working_time_cur = np.array(block.data[:, 'process_time'])[:self.num_of_processes]
-        self.monitor.record(self.env.now, "Source", None, part_id=block.id, event="part_created")
-        self.model['Process0'].put(block)
-        self.monitor.record(self.env.now, "Source", None, part_id=block.id, event="part_transferred")
+        self.block = self.queue.pop(action)
+        block_working_time = np.array(self.block.data[:, 'process_time'])[:self.num_of_processes]
+        self.monitor.record(self.env.now, "Source", None, part_id=self.block.id, event="part_created")
+        self.model['Process0'].put(self.block)
+        self.monitor.record(self.env.now, "Source", None, part_id=self.block.id, event="part_transferred")
         self.num_of_blocks_put += 1
         while True:
             self.env.step()
@@ -46,9 +45,8 @@ class Assembly(object):
                     self.env.run(self.env.timeout(0))
                 break
 
-        part_transfer_update, work_finish_update = self._predict_lead_time(self.block_working_time_cur, self.part_transfer, self.work_finish)
+        part_transfer_update = self._predict_lead_time(block_working_time, self.part_transfer)
         self.part_transfer = part_transfer_update[:]
-        self.work_finish = work_finish_update[:]
 
         if self.num_of_blocks_put == self.num_of_parts:
             done = True
@@ -60,8 +58,6 @@ class Assembly(object):
         next_state = self._get_state()
 
         self.lead_time = self.part_transfer[-1]
-        self.tau = self.env.now - self.time
-        self.time = self.env.now
         if done:
             self.env.run()
 
@@ -69,20 +65,18 @@ class Assembly(object):
 
     def reset(self):
         self.env, self.model, self.monitor = self._modeling(self.num_of_processes, self.event_path)
-        self.inbound_panel_blocks = self.inbound_panel_blocks_clone[:]
-        for panel_block in self.inbound_panel_blocks:
-            panel_block.step = 0
+        if self.random_block:
+            self.inbound_panel_blocks = generate_block_schedule(self.num_of_parts)
+        else:
+            self.inbound_panel_blocks = self.inbound_panel_blocks_clone[:]
+            for panel_block in self.inbound_panel_blocks:
+                panel_block.step = 0
         random.shuffle(self.inbound_panel_blocks)
         # self.inbound_panel_blocks = sorted(self.inbound_panel_blocks, key=lambda block: block.data.sum(level=1)["process_time"])
         for i in range(self.len_of_queue):
             self.queue.append(self.inbound_panel_blocks.pop(0))
         self.lead_time = 0.0
         self.part_transfer = np.full(self.num_of_processes, 0.0)
-        self.work_finish = np.full(self.num_of_processes, 0.0)
-        self.block_working_time_pre = np.full(self.num_of_processes, 0.0)
-        self.block_working_time_cur = np.full(self.num_of_processes, 0.0)
-        self.time = 0.0
-        self.tau = 0.0
         self.num_of_blocks_put = 0
         return self._get_state()
 
@@ -91,7 +85,7 @@ class Assembly(object):
 
         server_feature = np.zeros(self.num_of_processes)
         for i in range(self.num_of_processes):
-            process = self.model['Process{0}'.format(i)]  # modeling한 Process
+            process = self.model['Process{0}'.format(i)]
             for server in process.server:
                 if server.part:
                     working_time_list = server.part.data.loc[slice(None), 'process_time']
@@ -99,8 +93,6 @@ class Assembly(object):
                     part_start_time = server.working_start
                     if working_time >= (self.env.now - part_start_time):
                         server_feature[i] = working_time - (self.env.now - part_start_time)
-                    # server_feature[i + 1:] = server_feature[i + 1:] + working_time_list[i + 1:-1].to_numpy()
-        # server_feature[:] = self.part_transfer - self.time
         state[:self.num_of_processes] = server_feature
 
         job_feature = np.zeros(self.num_of_processes * self.len_of_queue)
@@ -109,45 +101,31 @@ class Assembly(object):
             working_time = list(panel_block.data[:, 'process_time'])[:self.num_of_processes]
             job_feature[i * self.num_of_processes:i * self.num_of_processes + self.num_of_processes] = working_time
 
-        # job_feature = np.zeros([1 + self.num_of_processes, self.len_of_queue])
-        # total_working_time = np.zeros([1, len(self.queue)])
-        # predicted_lead_time = np.zeros([self.num_of_processes, len(self.queue)])
-        # for i in range(len(self.queue)):
-        #     panel_block = self.queue[i]
-        #     working_time = list(panel_block.data[:, 'process_time'])[:self.num_of_processes]
-        #     part_transfer_predicted, _ = self._predict_lead_time(working_time)
-        #     total_working_time[:, i] = np.sum(working_time)
-        #     predicted_lead_time[:, i] = part_transfer_predicted
-        #
-        # temp = np.concatenate((total_working_time, predicted_lead_time))
-        # rank = np.array([self._rankmin(i) for i in temp])
-        # job_feature[np.where(rank == 0)] = 1
-
         state[self.num_of_processes:] = job_feature
         return state
 
     def _calculate_reward(self):
         increase = self.part_transfer[-1] - self.lead_time
-        reward = 25 - increase
+        reward = 2.5 - increase / self.block.data.sum(level=1)["process_time"]
         return reward
 
-    def _calculate_reward_by_first_process_idle_time(self):
-        event_log = pd.read_csv(self.event_path)
-        utilization, idle_time, working_time \
-            = cal_utilization(event_log, "Process0", "Process", start_time=self.time, finish_time=self.env.now)
-        reward = utilization
-        return reward
-
-    def _calculate_reward_by_entire_idle_time(self):
-        event_log = pd.read_csv(self.event_path)
-        utilization_list = []
-        for name in self.model:
-            if name != "Sink":
-                utilization, idle_time, working_time \
-                    = cal_utilization(event_log, name, "Process", start_time=self.time, finish_time=self.env.now)
-                utilization_list.append(utilization)
-        reward = np.sum(utilization_list)
-        return reward
+    # def _calculate_reward_by_first_process_idle_time(self):
+    #     event_log = pd.read_csv(self.event_path)
+    #     utilization, idle_time, working_time \
+    #         = cal_utilization(event_log, "Process0", "Process", start_time=self.time, finish_time=self.env.now)
+    #     reward = utilization
+    #     return reward
+    #
+    # def _calculate_reward_by_entire_idle_time(self):
+    #     event_log = pd.read_csv(self.event_path)
+    #     utilization_list = []
+    #     for name in self.model:
+    #         if name != "Sink":
+    #             utilization, idle_time, working_time \
+    #                 = cal_utilization(event_log, name, "Process", start_time=self.time, finish_time=self.env.now)
+    #             utilization_list.append(utilization)
+    #     reward = np.sum(utilization_list)
+    #     return reward
 
     def _modeling(self, num_of_processes, event_path):
         env = simpy.Environment()
@@ -159,33 +137,22 @@ class Assembly(object):
                 model['Sink'] = Sink(env, 'Sink', monitor)
         return env, model, monitor
 
-    def _predict_lead_time(self, block_working_time, part_transfer, work_finish):
+    def _predict_lead_time(self, block_working_time, part_transfer):
         part_transfer_update = np.cumsum(block_working_time) + part_transfer[0]
-        work_finish_update = np.cumsum(block_working_time) + part_transfer[0]
         for i in range(self.num_of_processes - 1):
             if block_working_time[i] == 0.0:
                 part_transfer_update[i + 1:] += (part_transfer[i + 1] - part_transfer_update[i - 1])
-                work_finish_update[i + 1] += (work_finish[i + 1] - work_finish_update[i - 1])
                 part_transfer_update[i - 1] = part_transfer[i + 1]
                 part_transfer_update[i] = part_transfer[i]
-                work_finish_update[i] = work_finish[i]
                 continue
             delay = part_transfer[i + 1] - part_transfer_update[i]
             if delay > 0.0:
                 part_transfer_update[i:] += delay
-                work_finish_update[i + 1:] += delay
             if (i == self.num_of_processes - 2) and (block_working_time[i + 1] == 0.0):
                 if delay > 0.0:
                     part_transfer_update[i:] -= delay
                 part_transfer_update[-1] = part_transfer[-1]
-                work_finish_update[-1] = work_finish[-1]
-        return part_transfer_update, work_finish_update
-
-    def _rankmin(self, x):
-        u, inv, counts = np.unique(x, return_inverse=True, return_counts=True)
-        csum = np.zeros_like(counts)
-        csum[1:] = counts[:-1].cumsum()
-        return csum[inv]
+        return part_transfer_update
 
 
 if __name__ == '__main__':
