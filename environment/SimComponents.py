@@ -12,6 +12,7 @@ save_path = './result'
 if not os.path.exists(save_path):
     os.makedirs(save_path)
 
+
 class Part(object):
     def __init__(self, name, data):
         # 해당 Part의 이름
@@ -23,10 +24,10 @@ class Part(object):
 
 
 class Source(object):
-    def __init__(self, env, name, block_data, process_dict, monitor):
+    def __init__(self, env, name, parts, process_dict, monitor):
         self.env = env
         self.name = name
-        self.block_data = block_data
+        self.parts = parts
         self.process_dict = process_dict
         self.Monitor = monitor
 
@@ -36,11 +37,7 @@ class Source(object):
 
     def run(self):
         while True:
-            # block_data로부터 part 정보 읽어주기
-            part_id, data = self.block_data.index[self.parts_sent], self.block_data.iloc[self.parts_sent]
-
-            # Part class로 modeling
-            part = Part(part_id, data)
+            part = self.parts.pop(0)
 
             if self.parts_sent != 0:
                 IAT = part.data[(0, 'start_time')] - self.env.now
@@ -68,8 +65,8 @@ class Source(object):
             self.process_dict[next_process].put(part)
             self.parts_sent += 1
 
-            if self.parts_sent == len(self.block_data):
-                print("all parts are sent at : ", self.env.now)
+            if len(self.parts) == 0:
+                # print("all parts are sent at : ", self.env.now)
                 break
 
 

@@ -15,14 +15,6 @@ class Assembly(object):
         self.event_path = event_path
         self.inbound_panel_blocks = inbound_panel_blocks
         self.inbound_panel_blocks_clone = self.inbound_panel_blocks[:]
-        # if inbound_panel_blocks:
-        #     self.random = False
-        #     self.inbound_panel_blocks = inbound_panel_blocks
-        #     self.inbound_panel_blocks_clone = self.inbound_panel_blocks[:]
-        # else:
-        #     self.random = True
-        #     self.inbound_panel_blocks = generate_block_schedule(num_of_parts)
-        #     self.inbound_panel_blocks_clone = self.inbound_panel_blocks[:]
         self.num_of_parts = num_of_parts
 
         self.a_size = len_of_queue
@@ -77,17 +69,11 @@ class Assembly(object):
 
     def reset(self):
         self.env, self.model, self.monitor = self._modeling(self.num_of_processes, self.event_path)
-        # if self.random:
-        #     self.inbound_panel_blocks = generate_block_schedule()
-        # else:
-        #     self.inbound_panel_blocks = self.inbound_panel_blocks_clone[:]
-        #     for panel_block in self.inbound_panel_blocks:
-        #         panel_block.step = 0
-        #     random.shuffle(self.inbound_panel_blocks)
         self.inbound_panel_blocks = self.inbound_panel_blocks_clone[:]
         for panel_block in self.inbound_panel_blocks:
             panel_block.step = 0
         random.shuffle(self.inbound_panel_blocks)
+        # self.inbound_panel_blocks = sorted(self.inbound_panel_blocks, key=lambda block: block.data.sum(level=1)["process_time"])
         for i in range(self.len_of_queue):
             self.queue.append(self.inbound_panel_blocks.pop(0))
         self.lead_time = 0.0
@@ -207,27 +193,23 @@ if __name__ == '__main__':
     from environment.panelblock import *
     num_of_processes = 7
     len_of_queue = 10
-
-    random_blocks = True
+    num_of_parts = 50
 
     event_path = './test_env'
     if not os.path.exists(event_path):
         os.makedirs(event_path)
 
-    if random_blocks:
-        num_of_parts = 100
-        assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_train.csv')
-    else:
-        panel_blocks = import_panel_block_schedule('./data/PBS_assy_sequence_gen_000.csv')
-        num_of_parts = len(panel_blocks)
-        assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/event_PBS.csv',
-                            inbound_panel_blocks=panel_blocks)
+    # panel_blocks = import_panel_block_schedule('./data/PBS_assy_sequence_gen_000.csv')
+    panel_blocks = generate_block_schedule(num_of_parts)
+    assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/event_PBS.csv',
+                        inbound_panel_blocks=panel_blocks)
 
     s = assembly.reset()
     r_cum = 0.0
     print("reset")
     print(s)
     for i in range(70):
+        # print(assembly.queue[0].data.sum(level=1)["process_time"])
         s_next, r, d = assembly.step(0)
         r_cum += r
         print("step: {0} | parts_sent: {1} | parts_completed: {2} | reward: {3} | cumulative reward: {4}"

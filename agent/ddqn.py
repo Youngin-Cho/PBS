@@ -29,14 +29,14 @@ class DDQN():
         self.state_size = state_size
         self.action_size = action_size
 
-        self.discount_factor = 0.9
+        self.discount_factor = 0.99
         self.learning_rate = 1e-5
         self.epsilon = 1.0
         self.epsilon_decay = 0.999
         self.epsilon_min = 0.01
-        self.batch_size = 32
+        self.batch_size = 64
         self.train_start = 100
-        self.target_update_iter = 200
+        self.target_update_iter = 500
 
         self.memory = deque(maxlen=2000)
 
@@ -101,8 +101,8 @@ if __name__ == "__main__":
     num_episode = 10001
 
     num_of_processes = 7
-    len_of_queue = 20
-    num_of_parts = 100
+    len_of_queue = 10
+    num_of_parts = 60
 
     state_size = num_of_processes + num_of_processes * len_of_queue
     action_size = len_of_queue
@@ -139,7 +139,7 @@ if __name__ == "__main__":
     assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_train.csv',
                         inbound_panel_blocks=panel_blocks)
 
-    agent = DDQN(state_size, action_size, load_model=load_model)
+    agent = DDQN(state_size, action_size, model_path=model_path, load_model=load_model)
     writer = tf.summary.create_file_writer(summary_path)
 
     avg_max_q_list = []
@@ -182,7 +182,7 @@ if __name__ == "__main__":
                     tf.summary.scalar('Performance/Average Max Q', agent.avg_q_max / float(step), step=e)
                     tf.summary.scalar('Performance/Reward', episode_reward, step=e)
                     tf.summary.scalar('Performance/Lead time', lead_time, step=e)
-                    avg_max_q_list.append(agent.avg_loss / float(step))
+                    avg_max_q_list.append(agent.avg_q_max / float(step))
                     reward_list.append(episode_reward)
                     lead_time_list.append(lead_time)
                     loss_list.append(agent.avg_loss / float(step))
