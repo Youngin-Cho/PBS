@@ -6,19 +6,24 @@ import tensorflow as tf
 import numpy as np
 import pandas as pd
 
+from agent.ddqn import build_network
 from environment.assembly import Assembly
 from environment.panelblock import *
 from environment.SimComponents import Source, Process, Sink, Monitor
 
 
-def simulation(panel_blocks, num_of_processes, len_of_queue, num_of_parts, event_path, method="SPT"):
+def simulation(panel_blocks, num_of_processes, len_of_queue, num_of_parts, model_path=None, event_path=None, method="SPT"):
     if method == "RL":
-        model = tf.keras.models.load_model(model_path)
-        assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_test_ddqn.csv',
-                            inbound_panel_blocks=panel_blocks)
-
         state_size = num_of_processes + num_of_processes * len_of_queue
         action_size = len_of_queue
+
+        model = build_network(state_size, action_size)
+        ckpt = tf.train.Checkpoint(net=model)
+        manager = tf.train.CheckpointManager(ckpt, model_path, max_to_keep=3)
+        ckpt.restore(manager.latest_checkpoint)
+
+        assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/log_test_ddqn.csv',
+                            inbound_panel_blocks=panel_blocks)
 
         done = False
         step = 0
@@ -97,7 +102,7 @@ if __name__ == "__main__":
             panel_blocks = generate_block_schedule(num_of_parts)
             # panel_blocks = import_panel_block_schedule('../environment/data/PBS_assy_sequence_gen_000.csv')
             # num_of_parts = len(panel_blocks)
-            lead_time = simulation(panel_blocks, num_of_processes, len_of_queue, num_of_parts, event_path, method=method)
+            lead_time = simulation(panel_blocks, num_of_processes, len_of_queue, num_of_parts, model_path, event_path, method=method)
             results[method].append(lead_time)
 
     df_results = pd.DataFrame(results)

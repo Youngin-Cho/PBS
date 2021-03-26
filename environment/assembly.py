@@ -26,6 +26,7 @@ class Assembly(object):
         self.env, self.model, self.monitor = self._modeling(self.num_of_processes, self.event_path)
         self.queue = []
         self.block = None
+        self.time = 0.0
         self.lead_time = 0.0
         self.part_transfer = np.full(num_of_processes, 0.0)
         self.num_of_blocks_put = 0
@@ -58,6 +59,7 @@ class Assembly(object):
         next_state = self._get_state()
 
         self.lead_time = self.part_transfer[-1]
+        self.time = self.env.now
         if done:
             self.env.run()
 
@@ -75,6 +77,7 @@ class Assembly(object):
         # self.inbound_panel_blocks = sorted(self.inbound_panel_blocks, key=lambda block: block.data.sum(level=1)["process_time"])
         for i in range(self.len_of_queue):
             self.queue.append(self.inbound_panel_blocks.pop(0))
+        self.time = 0.0
         self.lead_time = 0.0
         self.part_transfer = np.full(self.num_of_processes, 0.0)
         self.num_of_blocks_put = 0
@@ -104,9 +107,15 @@ class Assembly(object):
         state[self.num_of_processes:] = job_feature
         return state
 
-    def _calculate_reward(self):
+    def _calculate_reward_d(self):
         increase = self.part_transfer[-1] - self.lead_time
         reward = 2.5 - increase / self.block.data.sum(level=1)["process_time"]
+        return reward
+
+    def _calculate_reward(self):
+        event_log = pd.read_csv(self.event_path)
+        throughput = cal_throughput(event_log, "Process6", "Process", start_time=0.0, finish_time=self.env.now)
+        reward = throughput
         return reward
 
     # def _calculate_reward_by_first_process_idle_time(self):
@@ -166,8 +175,8 @@ if __name__ == '__main__':
     if not os.path.exists(event_path):
         os.makedirs(event_path)
 
-    # panel_blocks = import_panel_block_schedule('./data/PBS_assy_sequence_gen_000.csv')
-    panel_blocks = generate_block_schedule(num_of_parts)
+    panel_blocks = import_panel_block_schedule('./data/PBS_assy_sequence_gen_000.csv')
+    # panel_blocks = generate_block_schedule(num_of_parts)
     assembly = Assembly(num_of_processes, len_of_queue, num_of_parts, event_path + '/event_PBS.csv',
                         inbound_panel_blocks=panel_blocks)
 

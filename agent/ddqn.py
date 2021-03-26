@@ -8,20 +8,14 @@ from environment.assembly import Assembly
 from environment.panelblock import *
 
 
-class Network(tf.keras.Model):
-    def __init__(self, a_size):
-        super().__init__(name='ddqn')
-        self.hidden1 = tf.keras.layers.Dense(512, activation="relu", kernel_initializer="he_normal")
-        self.hidden2 = tf.keras.layers.Dense(256, activation="relu", kernel_initializer="he_normal")
-        self.hidden3 = tf.keras.layers.Dense(256, activation="relu", kernel_initializer="he_normal")
-        self.out = tf.keras.layers.Dense(a_size)
-
-    def call(self, inputs):
-        hidden1 = self.hidden1(inputs)
-        hidden2 = self.hidden2(hidden1)
-        hidden3 = self.hidden3(hidden2)
-        q_values = self.out(hidden3)
-        return q_values
+def build_network(in_dim, out_dim):
+    inputs = tf.keras.layers.Input(shape=(in_dim,))
+    hidden1 = tf.keras.layers.Dense(512, activation="elu", kernel_initializer="he_normal")(inputs)
+    hidden2 = tf.keras.layers.Dense(256, activation="elu", kernel_initializer="he_normal")(hidden1)
+    hidden3 = tf.keras.layers.Dense(256, activation="elu", kernel_initializer="he_normal")(hidden2)
+    outputs = tf.keras.layers.Dense(out_dim)(hidden3)
+    model = tf.keras.models.Model(inputs=inputs, outputs=outputs)
+    return model
 
 
 class DDQN():
@@ -44,16 +38,8 @@ class DDQN():
 
         self.memory = deque(maxlen=2000)
 
-        # if load_model:
-        #     self.model = tf.keras.models.load_model(model_path)
-        #     self.target_model = tf.keras.models.load_model(model_path)
-        # else:
-        #     self.model = Network(action_size)
-        #     self.target_model = Network(action_size)
-        #     self.update_target_model()
-
-        self.model = self.build_network(self.state_size, self.action_size, 512, 256, 256)
-        self.target_model = self.build_network(self.state_size, self.action_size, 512, 256, 256)
+        self.model = build_network(self.state_size, self.action_size)
+        self.target_model = build_network(self.state_size, self.action_size)
 
         self.optimizer = tf.keras.optimizers.Adam(lr=self.learning_rate)
         self.ckpt = tf.train.Checkpoint(step=tf.Variable(1), optimizer=self.optimizer, net=self.model)
@@ -62,20 +48,10 @@ class DDQN():
 
         if load_model:
             self.ckpt.restore(self.manager.latest_checkpoint)
-            print()
 
         self.update_target_model()
 
         self.avg_q_max, self.avg_loss = 0, 0
-
-    def build_network(self, in_dim, out_dim, n_units1, n_units2, n_units3):
-        inputs = tf.keras.layers.Input(shape=(in_dim,))
-        hidden1 = tf.keras.layers.Dense(n_units1, activation="elu", kernel_initializer="he_normal")(inputs)
-        hidden2 = tf.keras.layers.Dense(n_units2, activation="elu", kernel_initializer="he_normal")(hidden1)
-        hidden3 = tf.keras.layers.Dense(n_units3, activation="elu", kernel_initializer="he_normal")(hidden2)
-        outputs = tf.keras.layers.Dense(out_dim)(hidden3)
-        model = tf.keras.models.Model(inputs=inputs, outputs=outputs)
-        return model
 
     def update_target_model(self):
         self.target_model.set_weights(self.model.get_weights())
@@ -182,7 +158,7 @@ class DDQN():
 
 
 if __name__ == "__main__":
-    num_episode = 20001
+    num_episode = 10001
 
     num_of_processes = 7
     len_of_queue = 10
