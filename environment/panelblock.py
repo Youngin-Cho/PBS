@@ -7,12 +7,15 @@ import matplotlib.pyplot as plt
 def generate_block_schedule(num_of_blocks=100):
     num_of_processes = 7
     block_id = ["block{0}".format(i) for i in range(num_of_blocks)]
-    a, b = -1.5, 1.5
-    loc = [2.26, 2.22, 0.5, 2.07, 1.88, 2.08, 2.78]
-    scale = [0.794, 0.888, 0.0, 0.600, 1.12, 0.757, 1.65]
+    # a, b = -1.5, 1.5
+    loc = np.array([2.26, 2.22, 0.5, 2.07, 1.88, 2.08, 2.78])
+    # scale = [0.794, 0.888, 0.0, 0.600, 1.12, 0.757, 1.65]
+    scale = np.array([2.26, 2.22, 0.5, 2.07, 1.88, 2.08, 2.78])
+    a = (0.1 - loc) / scale
+    b = ((2 * loc - 0.1) - loc) / scale
     process_time = np.zeros((num_of_blocks, num_of_processes))
     for i in range(num_of_processes):
-        r = np.round(stats.truncnorm.rvs(a, b, loc[i], scale[i], size=num_of_blocks), 1)
+        r = np.round(stats.truncnorm.rvs(a[i], b[i], loc[i], scale[i], size=num_of_blocks), 1)
         process_time[:, i] = r
 
     panel_blocks = []

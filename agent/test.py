@@ -11,6 +11,9 @@ from environment.assembly import Assembly
 from environment.panelblock import *
 from environment.SimComponents import Source, Process, Sink, Monitor
 
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 def simulation(panel_blocks, num_of_processes, len_of_queue, num_of_parts, model_path=None, event_path=None, method="SPT"):
     if method == "RL":
@@ -34,6 +37,8 @@ def simulation(panel_blocks, num_of_processes, len_of_queue, num_of_parts, model
         state = np.reshape(state, [1, state_size])
 
         while not done:
+            assembly.render()
+
             step += 1
 
             q_value = model(state)
@@ -42,18 +47,6 @@ def simulation(panel_blocks, num_of_processes, len_of_queue, num_of_parts, model
             action = np.argmax(q_value[0, :len(assembly.queue)])
             next_state, reward, done = assembly.step(action)
             next_state = np.reshape(next_state, [1, state_size])
-
-            part_list = []
-            for i in range(num_of_processes):
-                process = assembly.model['Process{0}'.format(i)]
-                for server in process.server:
-                    if server.part:
-                        part_list.append(server.part.id)
-                    else:
-                        part_list.append("        ")
-            print("step {0}")
-            print("[{0}] - [{1}] - [{2}] - [{3}] - [{4}] - [{5}] - [{6}]"
-                  .format(part_list[0], part_list[1], part_list[2], part_list[3], part_list[4], part_list[5], part_list[6]))
 
             episode_reward += reward
 
@@ -88,12 +81,12 @@ def simulation(panel_blocks, num_of_processes, len_of_queue, num_of_parts, model
 
 
 if __name__ == "__main__":
-    test_iteration = 100
+    test_iteration = 1
     results = {"RL": [], "SPT": [], "LPT": [], "RANDOM": []}
 
     num_of_processes = 7
     len_of_queue = 10
-    num_of_parts = 60
+    num_of_parts = 600
 
     state_size = num_of_processes + num_of_processes * len_of_queue
     action_size = len_of_queue

@@ -1,3 +1,4 @@
+import sys
 import random
 import simpy
 import numpy as np
@@ -6,6 +7,9 @@ import pandas as pd
 from environment.SimComponents import Process, Sink, Monitor
 from environment.PostProcessing import *
 from environment.panelblock import *
+
+from io import StringIO
+from contextlib import closing
 
 
 class Assembly(object):
@@ -26,12 +30,14 @@ class Assembly(object):
         self.env, self.model, self.monitor = self._modeling(self.num_of_processes, self.event_path)
         self.queue = []
         self.block = None
+        self.stage = 0
         self.time = 0.0
         self.lead_time = 0.0
         self.part_transfer = np.full(num_of_processes, 0.0)
         self.num_of_blocks_put = 0
 
     def step(self, action):
+        self.stage += 1
         done = False
         self.block = self.queue.pop(action)
         block_working_time = np.array(self.block.data[:, 'process_time'])[:self.num_of_processes]
@@ -77,11 +83,31 @@ class Assembly(object):
         # self.inbound_panel_blocks = sorted(self.inbound_panel_blocks, key=lambda block: block.data.sum(level=1)["process_time"])
         for i in range(self.len_of_queue):
             self.queue.append(self.inbound_panel_blocks.pop(0))
+        self.stage = 0
         self.time = 0.0
         self.lead_time = 0.0
         self.part_transfer = np.full(self.num_of_processes, 0.0)
         self.num_of_blocks_put = 0
         return self._get_state()
+
+    def render(self):
+        outfile = sys.stdout
+
+        part_list = []
+        for i in range(self.num_of_processes):
+            process = self.model['Process{0}'.format(i)]
+            for server in process.server:
+                if server.part:
+                    part_list.append(server.part.id)
+                else:
+                    part_list.append("      ")
+
+        outfile.write("step {0}: [{1}] - [{2}] - [{3}] - [{4}] - [{5}] - [{6}] - [{7}]\n"
+                  .format(self.stage, part_list[0], part_list[1], part_list[2], part_list[3], part_list[4], part_list[5], part_list[6]))
+
+        # with closing(outfile):
+        #     return outfile.getvalue()
+
 
     def _get_state(self):
         state = np.full(self.s_size, 0.0)
@@ -107,12 +133,12 @@ class Assembly(object):
         state[self.num_of_processes:] = job_feature
         return state
 
-    def _calculate_reward_d(self):
+    def _calculate_reward(self):
         increase = self.part_transfer[-1] - self.lead_time
-        reward = 2.5 - increase / self.block.data.sum(level=1)["process_time"]
+        reward = 25 - increase #/ self.block.data.sum(level=1)["process_time"]
         return reward
 
-    def _calculate_reward(self):
+    def _calculate_reward_rr(self):
         event_log = pd.read_csv(self.event_path)
         throughput = cal_throughput(event_log, "Process6", "Process", start_time=0.0, finish_time=self.env.now)
         reward = throughput
